@@ -1,0 +1,41 @@
+<html>
+    <head>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;1,700&display=swap');
+            body {
+                margin: 0;
+                background-color: transparent;
+            }
+            p {
+                font-family: 'Montserrat', sans-serif;
+                font-size: 28pt;
+                line-height: 2px;
+                color: white;
+                text-shadow: 3px 0px 5px #000000;
+            }
+            .container {
+                margin-top: 25px;
+                margin-left: 25px;
+            }
+            .title {
+                font-style: italic;
+            }
+            .subtitle {
+                font-size: 24pt;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <p class="title">Creepy Nuts - Daten (TV Size)</p>
+            <p class="subtitle">Difficulty: Hard</p>
+        </div>
+        <script>
+            const params = new Proxy(new URLSearchParams(window.location.search), {
+                get: (searchParams, prop) => searchParams.get(prop),
+            });
+            document.getElementsByClassName("title")[0].innerHTML = params.title;
+            document.getElementsByClassName("subtitle")[0].innerHTML = `Difficulty: ${params.sub}`;
+        </script>
+    </body>
+</html>
