@@ -1,4 +1,5 @@
 const fs = require("fs");
+const fsExtra = require("fs-extra");
 const path = require("path");
 const { exec } = require('child_process');
 const sqlite3 = require('sqlite3').verbose();
@@ -12,19 +13,14 @@ const db = new sqlite3.Database(path.join(__dirname, "storage.db"));
 
 const ffmpegSettings = [
     "-y",
-    "-vcodec copy",
-    "-acodec copy",
-    "-c:v h264_cuvid",
     "-c:v h264_nvenc",
-    "-b:v 5M",
-    "-b:a 192k"
-];
-
-const concatSettings = [
-    "-y",
-    "-c:v h264_cuvid",
-    "-c:v h264_nvenc",
-    "-b:v 5M",
+    "-c:a aac",
+    "-rc constqp",
+    "-qp 26",
+    "-profile high",
+    "-preset p7",
+    "-g 450",
+    "-b:v 10M",
     "-b:a 192k"
 ];
 
@@ -32,9 +28,9 @@ const concatSettings = [
     console.time("Rendering")
     await new Promise((resolve) => {
         let needed = true;
-        db.serialize(() => {
-            db.run("CREATE TABLE IF NOT EXISTS maps (name VARCHAR(255) NOT NULL, diff VARCHAR(255) NOT NULL, path VARCHAR(255) NOT NULL)")
-            db.run("CREATE TABLE IF NOT EXISTS hash (id VARCHAR(255) NOT NULL, PRIMARY KEY (id))")
+        db.serialize(async () => {
+            await db.run("CREATE TABLE IF NOT EXISTS maps (name VARCHAR(255) NOT NULL, diff VARCHAR(255) NOT NULL, path VARCHAR(255) NOT NULL)")
+            await db.run("CREATE TABLE IF NOT EXISTS hash (id VARCHAR(255) NOT NULL, PRIMARY KEY (id))")
 
             db.get(`SELECT id FROM hash LIMIT 1;`, async (err, row) => {
                 console.log(`Checking songs folder hash..`)
@@ -66,15 +62,15 @@ const concatSettings = [
     
                         let difficulty = song[y].match(/(?!\(.*\))\[(.*)\]/)
     
-                        db.get(`SELECT path FROM maps WHERE path = "${path.join(osu, songsFolder[i], song[y])}"`, (err, row) => {
+                        db.get(`SELECT path FROM maps WHERE path = "${path.join(osu, songsFolder[i], song[y])}"`, async (err, row) => {
                             if(typeof row == "undefined") {
+                                await db.exec(`INSERT INTO maps VALUES ("${match[0].trim()}", "${difficulty[1]}", "${path.join(osu, songsFolder[i], song[y])}")`)
                                 console.log(`Running INSERT for ${match[0].trim()} ..`)
-                                db.exec(`INSERT INTO maps VALUES ("${match[0].trim()}", "${difficulty[1]}", "${path.join(osu, songsFolder[i], song[y])}")`)
                             }
 
                             if((y+1) >= song.length) {
-                                db.exec(`DELETE FROM hash`)
-                                db.exec(`INSERT INTO hash VALUES ("${folderHash.hash}")`)
+                                await db.exec(`DELETE FROM hash`)
+                                await db.exec(`INSERT INTO hash VALUES ("${folderHash.hash}")`)
 
                                 resolve()
                             }
@@ -250,12 +246,23 @@ const concatSettings = [
 
     let filterComplex = `-filter_complex "${settb.concat(atrim, xFadeFilters, audioFilters).join(" ").replace(/\s/g, "")}"`
 
-    let ffmpegConcat = toCrossfade.concat([filterComplex], concatSettings, ["-map \"[video]\"", "-map \"[audio]\""])
+    let ffmpegConcat = toCrossfade.concat(ffmpegSettings, [filterComplex], ["-map \"[video]\"", "-map \"[audio]\""])
+
     let finalRender = exec(`ffmpeg ${ffmpegConcat.join(" ")} output.mp4`)
     finalRender.on("exit", () => {
-        console.log(`Done!`)
-        console.timeEnd("Rendering")
-        process.exit()
+        let getOffset = exec(`ffprobe -v error -select_streams v:0 -print_format compact=print_section=0:nokey=1:escape=csv -show_entries stream=duration output.mp4`)
+        getOffset.stdout.on("data", async (o) => {
+            offset = Number(o).toFixed(3)
+
+            let fadeInOut = exec(`ffmpeg -i output.mp4 ${ffmpegSettings.join(" ")} -filter_complex "[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${offset-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${offset-1}[audio]" -map "[video]" -map "[audio]" output_done.mp4`)
+            fadeInOut.on("exit", async () => {
+                await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
+                await fs.unlinkSync("output.mp4")
+
+                console.timeEnd("Rendering")
+                process.exit()
+            })
+        })
     })
 
     console.log(`Putting all the videos together in a final cut..`)

@@ -5,3 +5,5 @@ node_modules/
 package-lock.json
 output.mp4
 storage.db
+output_done.mp4
+replays/*
