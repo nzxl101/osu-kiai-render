@@ -10,7 +10,6 @@
   "license": "ISC",
   "dependencies": {
     "fluent-ffmpeg": "^2.1.2",
-    "folder-hash": "^4.0.4",
     "fs": "^0.0.1-security",
     "fs-extra": "^11.1.1",
     "osu-parser": "github:nojhamster/osu-parser",

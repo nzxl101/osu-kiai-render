@@ -4,12 +4,11 @@ const path = require("path");
 const { exec } = require('child_process');
 const sqlite3 = require('sqlite3').verbose();
 const puppeteer = require('puppeteer');
-const { hashElement } = require('folder-hash');
 const parser = require('osu-parser');
 
 const osu = "C:\\Users\\rzbwi\\AppData\\Local\\osu\!\\Songs";
 const danser = path.join(__dirname, "danser", "danser-cli.exe");
-const db = new sqlite3.Database(path.join(__dirname, "storage.db"));
+const db = new sqlite3.Database(path.join(danser, "..", "danser.db"));
 
 const ffmpegSettings = [
     "-y",
@@ -26,60 +25,6 @@ const ffmpegSettings = [
 
 (async () => {
     console.time("Rendering")
-    await new Promise((resolve) => {
-        let needed = true;
-        db.serialize(async () => {
-            await db.run("CREATE TABLE IF NOT EXISTS maps (name VARCHAR(255) NOT NULL, diff VARCHAR(255) NOT NULL, path VARCHAR(255) NOT NULL)")
-            await db.run("CREATE TABLE IF NOT EXISTS hash (id VARCHAR(255) NOT NULL, PRIMARY KEY (id))")
-
-            db.get(`SELECT id FROM hash LIMIT 1;`, async (err, row) => {
-                console.log(`Checking songs folder hash..`)
-                let folderHash = await hashElement(osu, {
-                    files: {
-                        exclude: ["*"]
-                    }
-                })
-
-                if(typeof row != "undefined" && row.id == folderHash.hash) {
-                    console.log(`No update needed!`)
-                    needed = false;
-                }
-                
-                if(!needed) {
-                    return resolve()
-                }
-
-                console.log(`Updating songs database..!`);
-
-                let songsFolder = fs.readdirSync(osu).filter(x => !x.match(/^.*.txt/))
-                for (let i = 0; i < songsFolder.length; i++) {
-                    let song = fs.readdirSync(path.join(osu, songsFolder[i])).filter(x => x.match(/^.*.(osu)$/))
-                    for (let y = 0; y < song.length; y++) {
-                        if(!song[y]) continue
-    
-                        let match = song[y].match(/.*\s(?=\(.*\)\s\[.*\])/)
-                        if(!match) continue
-    
-                        let difficulty = song[y].match(/(?!\(.*\))\[(.*)\]/)
-    
-                        db.get(`SELECT path FROM maps WHERE path = "${path.join(osu, songsFolder[i], song[y])}"`, async (err, row) => {
-                            if(typeof row == "undefined") {
-                                await db.exec(`INSERT INTO maps VALUES ("${match[0].trim()}", "${difficulty[1]}", "${path.join(osu, songsFolder[i], song[y])}")`)
-                                console.log(`Running INSERT for ${match[0].trim()} ..`)
-                            }
-
-                            if((y+1) >= song.length) {
-                                await db.exec(`DELETE FROM hash`)
-                                await db.exec(`INSERT INTO hash VALUES ("${folderHash.hash}")`)
-
-                                resolve()
-                            }
-                        })
-                    }
-                }
-            })
-        })
-    })
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -101,12 +46,12 @@ const ffmpegSettings = [
             let kiai = 0
             let start = 0
     
-            db.get(`SELECT path FROM maps WHERE name = "${artist[1].trim()} - ${title[1].trim()}" AND diff = "${diff[2]}"`, (err, row) => {
+            db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${title[1].trim()}" AND artist = "${artist[1].trim()}" AND version = "${diff[2]}"`, (err, row) => {
                 if(typeof row == "undefined") {
                     return console.log(`Map ${artist[1].trim()} - ${title[1].trim()} not found!`);
                 }
     
-                parser.parseFile(row.path, (err, beatmap) => {
+                parser.parseFile(path.join(osu, row.dir, row.file), (err, beatmap) => {
                     start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
                     for (let i = 0; i < beatmap.timingPoints.length; i++) {
                         if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 3)) {
@@ -141,6 +86,8 @@ const ffmpegSettings = [
             })
         })
     })
+
+    return console.log(replays);
 
     for (let k in replays) {
         await new Promise((async (resolve) => {
