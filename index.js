@@ -45,6 +45,7 @@ const ffmpegSettings = [
             let diff = song.match(/.*\s(\[(.*)\])\s\(.*\)/)
             let kiai = 0
             let start = 0
+            let length = 0
     
             db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${title[1].trim()}" AND artist = "${artist[1].trim()}" AND version = "${diff[2]}"`, (err, row) => {
                 if(typeof row == "undefined") {
@@ -53,6 +54,7 @@ const ffmpegSettings = [
     
                 parser.parseFile(path.join(osu, row.dir, row.file), (err, beatmap) => {
                     start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
+                    length = beatmap.totalTime
                     for (let i = 0; i < beatmap.timingPoints.length; i++) {
                         if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 3)) {
                             if(beatmap.timingPoints[i].timingChange == true) {
@@ -76,7 +78,8 @@ const ffmpegSettings = [
                         sr: `${diff[2]}`,
                         saved: null,
                         title: `${artist[1].trim()} - ${title[1].trim()}`,
-                        kiai: kiai-start
+                        kiai: kiai-start,
+                        length: length
                     }
     
                     if((i+1) >= replayFiles.length) {
@@ -86,8 +89,6 @@ const ffmpegSettings = [
             })
         })
     })
-
-    return console.log(replays);
 
     for (let k in replays) {
         await new Promise((async (resolve) => {
