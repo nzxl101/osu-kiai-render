@@ -1,6 +1,13 @@
 # osu-kiai-render
 [![Watch the video](https://img.youtube.com/vi/SNR_-0EKn2E/default.jpg)](https://youtu.be/SNR_-0EKn2E)
 
-todo:
-use fluent-ffmpeg api instead of child processes 👏  
-add more info to on screen overlay 👏  
+Tool to automatically render kiai's from player replays
+
+```sh
+git clone https://github.com/nzxl101/osu-kiai-render
+cd osu-kiai-render
+npm install
+curl -o danser.zip https://github.com/Wieku/danser-go/releases/download/0.8.4/danser-0.8.4-win.zip
+unzip danser.zip -d danser
+node .
+```

@@ -1,20 +1,21 @@
 const fs = require("fs");
 const fsExtra = require("fs-extra");
 const path = require("path");
-const { exec } = require('child_process');
-const sqlite3 = require('sqlite3').verbose();
+const child_process = require('child_process');
+const SQLite = require('@surfy/sqlite');
 const puppeteer = require('puppeteer');
 const parser = require('osu-parser');
+const ffmpeg = require("fluent-ffmpeg");
+const ffprobe = require("fluent-ffmpeg").ffprobe;
+const osr = require('node-osr');
 
 const osu = "C:\\Users\\rzbwi\\AppData\\Local\\osu\!\\Songs";
 const danser = path.join(__dirname, "danser", "danser-cli.exe");
-const db = new sqlite3.Database(path.join(danser, "..", "danser.db"));
 
 const ffmpegSettings = [
-    "-y",
     "-c:v h264_nvenc",
     "-c:a aac",
-    "-rc constqp",
+    "-rc cbr",
     "-qp 26",
     "-profile high",
     "-preset p7",
@@ -26,192 +27,258 @@ const ffmpegSettings = [
 (async () => {
     console.time("Rendering")
 
-    const browser = await puppeteer.launch({
-        headless: "new",
-        defaultViewport: {
-            height: 100,
-            width: 1400
-        }
-    })
-    const replays = {}
+    const replays = await getReplays(fs.readdirSync(path.join(__dirname, "replays")))
+    console.log(`Found ${Object.entries(replays).length} replays ..`)
 
-    await new Promise((resolve) => {
-        let replayFiles = fs.readdirSync(path.join(__dirname, "replays"))
-        replayFiles.forEach((v, i) => {
-            let song = v.replace(/\w+\s-\s/, "")
+    await renderReplays(replays)
 
-            let artist = song.match(/^(.*?)\s-\s(.*?)$/)
-            let title = song.match(/-\s(.*?)\[/)
-            let diff = song.match(/.*\s(\[(.*)\])\s\(.*\)/)
-            let kiai = 0
-            let start = 0
-            let length = 0
-    
-            db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${title[1].trim()}" AND artist = "${artist[1].trim()}" AND version = "${diff[2]}"`, (err, row) => {
-                if(typeof row == "undefined") {
-                    return console.log(`Map ${artist[1].trim()} - ${title[1].trim()} not found!`);
-                }
-    
-                parser.parseFile(path.join(osu, row.dir, row.file), (err, beatmap) => {
-                    start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
-                    length = beatmap.totalTime
-                    for (let i = 0; i < beatmap.timingPoints.length; i++) {
-                        if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 3)) {
-                            if(beatmap.timingPoints[i].timingChange == true) {
-                                kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                                break;
-                            } else if(beatmap.timingPoints[i].kiaiTimeActive == true) {
-                                kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                                break;
-                            } else if(beatmap.timingPoints[i].bpm != beatmap.bpmMin) {
-                                kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                                break;
-                            } else if(beatmap.timingPoints[i].velocity != beatmap.timingPoints[0].velocity) {
-                                kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                                break;
-                            }
-                        }
-                    }
-    
-                    replays[`${v.replace(/[\n\r\s\t]+/g, "")}`] = {
-                        file: `${path.join(__dirname, ".", "replays", v)}`,
-                        sr: `${diff[2]}`,
-                        saved: null,
-                        title: `${artist[1].trim()} - ${title[1].trim()}`,
-                        kiai: kiai-start,
-                        length: length
-                    }
-    
-                    if((i+1) >= replayFiles.length) {
-                        resolve()
-                    }
-                })
-            })
-        })
-    })
+    console.log(`Crossfading all replays into one video ..`)
+    await concatReplays(replays)
 
-    for (let k in replays) {
-        await new Promise((async (resolve) => {
-            rendering = true
-            let replay = replays[k]
+    console.log(`Adding a proper Fade In and Out ..`)
+    await fadeInOutReplay()
 
-            console.log(`Rendering ${replay.title} ..`)
+    console.log(`Done!`)
+    console.timeEnd("Rendering")
 
-            let initialRender = exec(`"${danser}" -record -skip -debug -replay "${replay.file}" -settings TopMapsOfTheWeek`)
-            initialRender.stdout.on("data", (o) => {
-                videoFile = o.match(/Video is available at:\s+(.*)/)
-                if(videoFile && replay.saved == null) {
-                    replay.saved = videoFile[1]
-                }
-            })
-            initialRender.on("exit", () => rendering = false)
+    await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
+    await fs.unlinkSync("output.mp4")
 
-            while (rendering) {
-                await new Promise(p => setTimeout(p, 50))
+    process.exit()
+})()
+
+function getReplays(replayFiles = []) {
+    return new Promise(async (resolve) => {
+        let parsedFiles = {}
+        let db = await SQLite(path.join(danser, "..", "danser.db"))
+
+        for (let i = 0; i < replayFiles.length; i++) {
+            let songTitle = replayFiles[i].replace(/\w+\s-\s/, "")
+            let songName = songTitle.match(/-\s(.*?)\[/)
+            let songArtist = songTitle.match(/^(.*?)\s-\s(.*?)$/)
+            let songVersion = songTitle.match(/.*\s(\[(.*)\])\s\(.*\)/)
+
+            let MD5 = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).beatmapMD5
+
+            let song = await db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${songName[1].trim()}" AND artist = "${songArtist[1].trim()}" AND version = "${songVersion[2].trim()}" OR md5 = "${MD5}" LIMIT 1;`)
+            if(typeof song == "undefined") {
+                console.log(`${songTitle} not found!`)
+                continue
             }
 
-            let getDuration = exec(`ffprobe -v error -select_streams v:0 -print_format compact=print_section=0:nokey=1:escape=csv -show_entries stream=duration "${replay.saved}"`)
-            getDuration.stdout.on("data", async (o) => {
-                duration = Number(o)
-
-                let skipToKiai = [`-i "${replay.saved}"`, `-ss ${((Math.floor(replay.kiai) - 5)) < 0 ? 0 : (Math.floor(replay.kiai) - 5)}`, `-to ${Math.floor(replay.kiai) + 25}`].concat(ffmpegSettings)
-                let overlayText = [`-i "${replay.saved.replace(".mp4", "_kiai.mp4")}" -i "${replay.saved.replace(".mp4", ".png")}"`, `-filter_complex "[0:v][1:v] overlay=0:850:enable='gt(t,0)'"`].concat(ffmpegSettings)
-
-                rendering = true
-
-                let renderKiai = exec(`ffmpeg ${skipToKiai.join(" ")} "${replay.saved.replace(".mp4", "_kiai.mp4")}"`)
-                renderKiai.on("exit", () => rendering = false)
-
-                while (rendering) {
-                    await new Promise(p => setTimeout(p, 50))
-                }
-
-                rendering = true
-
-                let page = await browser.newPage()
-                await page.goto(path.join(__dirname, `text.html?title=${replay.title}&sub=${replay.sr}`))
-                await page.screenshot({
-                    omitBackground: true,
-                    path: `${replay.saved.replace(".mp4", ".png")}`
+            let beatmap = null, kiai, start, length
+            await new Promise((resolve) => {
+                parser.parseFile(path.join(osu, song.dir, song.file), (err, map) => {
+                    beatmap = map
+                    resolve()
                 })
-                await page.close()
-
-                rendering = true
-
-                let renderOverlay = exec(`ffmpeg ${overlayText.join(" ")} "${replay.saved.replace(".mp4", "_edited.mp4")}"`)
-                renderOverlay.on("exit", () => rendering = false)
-
-                while (rendering) {
-                    await new Promise(p => setTimeout(p, 50))
-                }
-
-                resolve()
             })
-        }))
-    }
 
-    let toCrossfade = []
-    let xFadeFilters = []
-    let audioFilters = []
-    let atrim = []
-    let settb = []
-    let i = 0
-    let previousOffset = []
-    let replayLength = Object.entries(replays).length
+            start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
+            length = beatmap.totalTime
 
-    for(let x in replays) {
-        await new Promise((resolve) => {
-            toCrossfade.push(`-i "${replays[x].saved.replace(".mp4", "_edited.mp4")}"`)
-
-            let getOffset = exec(`ffprobe -v error -select_streams v:0 -print_format compact=print_section=0:nokey=1:escape=csv -show_entries stream=duration "${replays[x].saved.replace(".mp4", "_edited.mp4")}"`)
-            getOffset.stdout.on("data", async (o) => {
-                offset = Number(o)
-                previousOffset.push(Number(offset).toFixed(3))
-
-                if((i+1) >= replayLength) {
-                    for (let y = 0; y < replayLength; y++) {
-                        if(y == 0) {
-                            xFadeFilters.push(`[0:v][1:v]xfade=transition=fade:duration=1:offset=${(previousOffset[0]-1)}${replayLength > 1 ? `[V${y+1}]` : ""};`)
-                            audioFilters.push(`[0:a][1:a]acrossfade=duration=1:c1=tri:c2=tri${replayLength > 1 ? `[A${y+1}]` : "[audio]"};`)
-                        } else {
-                            if(y < replayLength-1) {
-                                let clonedArray = previousOffset.slice()
-                                xFadeFilters.push(`[V${y}][${y+1}:v]xfade=transition=fade:duration=1:offset=${Number(clonedArray.splice(0, (y+1)).reduce((partialSum, a) => partialSum + (a - 1), 0))}${y < replayLength-2 ? `[V${y+1}]` : ",format=yuv420p[video]"};`)
-                                audioFilters.push(`[A${y}][${y+1}:a]acrossfade=duration=1:c1=tri:c2=tri${y < replayLength-2 ? `[A${y+1}]` : "[audio]"};`)
-                            }
+            await new Promise((resolve) => {
+                for (let i = 0; i < beatmap.timingPoints.length; i++) {
+                    if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 3)) {
+                        if(beatmap.timingPoints[i].timingChange == true) {
+                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
+                            resolve()
+                            break;
+                        } else if(beatmap.timingPoints[i].kiaiTimeActive == true) {
+                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
+                            resolve()
+                            break;
+                        } else if(beatmap.timingPoints[i].bpm != beatmap.bpmMin) {
+                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
+                            resolve()
+                            break;
+                        } else if(beatmap.timingPoints[i].velocity != beatmap.timingPoints[0].velocity) {
+                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
+                            resolve()
+                            break;
                         }
-
-                        settb.push(`[${y}]settb=AVTB[${y}:v];`)
-                        atrim.push(`[${y}]atrim=0:${previousOffset[y]}[${y}:a];`)
                     }
                 }
-
-                i++
-                resolve()
             })
-        })
-    }
 
-    let filterComplex = `-filter_complex "${settb.concat(atrim, xFadeFilters, audioFilters).join(" ").replace(/\s/g, "")}"`
+            parsedFiles[`${replayFiles[i].replace(/[\n\r\s\t]+/g, "")}`] = {
+                file: `${path.join(__dirname, ".", "replays", replayFiles[i])}`,
+                sr: `${song.version}`,
+                saved: null,
+                title: `${song.artist} - ${song.title}`,
+                kiai: kiai-start,
+                length: length
+            }
 
-    let ffmpegConcat = toCrossfade.concat(ffmpegSettings, [filterComplex], ["-map \"[video]\"", "-map \"[audio]\""])
-
-    let finalRender = exec(`ffmpeg ${ffmpegConcat.join(" ")} output.mp4`)
-    finalRender.on("exit", () => {
-        let getOffset = exec(`ffprobe -v error -select_streams v:0 -print_format compact=print_section=0:nokey=1:escape=csv -show_entries stream=duration output.mp4`)
-        getOffset.stdout.on("data", async (o) => {
-            offset = Number(o).toFixed(3)
-
-            let fadeInOut = exec(`ffmpeg -i output.mp4 ${ffmpegSettings.join(" ")} -filter_complex "[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${offset-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${offset-1}[audio]" -map "[video]" -map "[audio]" output_done.mp4`)
-            fadeInOut.on("exit", async () => {
-                await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
-                await fs.unlinkSync("output.mp4")
-
-                console.timeEnd("Rendering")
-                process.exit()
-            })
-        })
+            if((i+1) >= replayFiles.length) {
+                return resolve(parsedFiles)
+            }
+        }
     })
+}
 
-    console.log(`Putting all the videos together in a final cut..`)
-})()
+function renderReplays(replays = {}) {
+    return new Promise(async (resolve) => {
+        let browser = await puppeteer.launch({
+            headless: "new",
+            defaultViewport: {
+                height: 100,
+                width: 1400
+            }
+        })
+
+        for (let k = 0; k < Object.entries(replays).length; k++) {
+            let replay = replays[Object.keys(replays)[k]]
+            console.log(`Rendering ${replay.title} ..`)
+
+            let render = await child_process.execSync(`"${danser}" -record -skip -debug -replay "${replay.file}" -settings TopMapsOfTheWeek`, { stdio: [] }).toString()
+            replay.saved = render.match(/Video is available at:\s+(.*)/)[1]
+
+            let duration = null
+            await new Promise((r) => {
+                ffprobe(replay.saved, (err, metadata) => {
+                    duration = metadata.format.duration
+                    r()
+                })
+            })
+
+            let getIntro = ffmpeg(replay.saved)
+                .setStartTime(1)
+                .setDuration(6)
+                .outputOptions(ffmpegSettings)
+                .output(replay.saved.replace(".mp4", "_intro.mp4"))
+
+            let getKiai = ffmpeg(replay.saved)
+                .setStartTime(replay.kiai)
+                .setDuration(25)
+                .outputOptions(ffmpegSettings)
+                .output(replay.saved.replace(".mp4", "_kiai.mp4"))
+
+            let concatKiaiIntro = ffmpeg(replay.saved.replace(".mp4", "_intro.mp4"))
+                .addInput(replay.saved.replace(".mp4", "_kiai.mp4"))
+                .complexFilter(`xfade=transition=fade:duration=1:offset=5;acrossfade=duration=1`)
+                .outputOptions(ffmpegSettings)
+                .output(replay.saved.replace(".mp4", "_concat.mp4"))
+
+            if((duration-5)-replay.kiai >= 20) {
+                await new Promise((r) => {
+                    getIntro
+                        .on("end", () => r())
+                        .run()
+                })
+            }
+
+            await new Promise((r) => {
+                getKiai
+                    .on("end", () => r())
+                    .run()
+            })
+
+            if(fs.existsSync(replay.saved.replace(".mp4", "_intro.mp4"))) {
+                await new Promise((r) => {
+                    concatKiaiIntro
+                        .on("end", () => r())
+                        .run()
+                })
+            }
+
+            let page = await browser.newPage()
+            await page.goto(path.join(__dirname, `text.html?title=${replay.title}&sub=${replay.sr}`))
+            await page.screenshot({
+                omitBackground: true,
+                path: `${replay.saved.replace(".mp4", ".png")}`
+            })
+            await page.close()
+
+            await new Promise((r) => {
+                let addTextOverlay = ffmpeg(fs.existsSync(replay.saved.replace(".mp4", "_concat.mp4")) == true ? replay.saved.replace(".mp4", "_concat.mp4") : replay.saved.replace(".mp4", "_kiai.mp4"))
+                    .addInput(replay.saved.replace(".mp4", ".png"))
+                    .complexFilter(`[0:v][1:v]overlay=0:850:enable='gt(t,0)'`)
+                    .outputOptions(ffmpegSettings)
+                    .output(replay.saved.replace(".mp4", "_edited.mp4"))
+
+                addTextOverlay
+                    .on("end", () => r())
+                    .run()
+            })
+
+            if((k+1) >= Object.entries(replays).length) {
+                resolve()
+            }
+        }
+    })
+}
+
+function concatReplays(replays = {}) {
+    return new Promise(async (resolve) => {
+        let toCrossfade = []
+        let xFadeFilters = [] 
+        let audioFilters = [] 
+        let atrim = []
+        let settb = []
+        let previousOffset = []
+        
+        for (let x = 0; x < Object.entries(replays).length; x++) {
+            let replay = replays[Object.keys(replays)[x]]
+
+            let duration = null
+            await new Promise((r) => {
+                ffprobe(replay.saved.replace(".mp4", "_edited.mp4"), (err, metadata) => {
+                    duration = metadata.format.duration
+                    r()
+                })
+            })
+
+            toCrossfade.push(`${replay.saved.replace(".mp4", "_edited.mp4")}`)
+            previousOffset.push(duration)
+
+            if((x+1) >= Object.entries(replays).length) {
+                for (let y = 0; y < toCrossfade.length; y++) {
+                    if(y == 0) {
+                        xFadeFilters.push(`[0:v][1:v]xfade=transition=fade:duration=1:offset=${(previousOffset[0]-1)}${toCrossfade.length > 2 ? `[V${y+1}]` : ",format=yuv420p[video]"};`)
+                        audioFilters.push(`[0:a][1:a]acrossfade=duration=1:c1=tri:c2=tri${toCrossfade.length > 2 ? `[A${y+1}]` : "[audio]"};`)
+                    } else {
+                        if(y < toCrossfade.length - 1) {
+                            let clonedArray = previousOffset.slice()
+                            xFadeFilters.push(`[V${y}][${y+1}:v]xfade=transition=fade:duration=1:offset=${Number(clonedArray.splice(0, (y+1)).reduce((partialSum, a) => partialSum + (a - 1), 0))}${y < toCrossfade.length-2 ? `[V${y+1}]` : ",format=yuv420p[video]"};`)
+                            audioFilters.push(`[A${y}][${y+1}:a]acrossfade=duration=1:c1=tri:c2=tri${y < toCrossfade.length-2 ? `[A${y+1}]` : "[audio]"};`)
+                        }
+                    }
+
+                    settb.push(`[${y}]settb=AVTB[${y}:v];`)
+                    atrim.push(`[${y}]atrim=0:${previousOffset[y]}[${y}:a];`)
+
+                    if((y+1) >= toCrossfade.length) {
+                        let concatCommand = ffmpeg()
+                        toCrossfade.forEach(file => concatCommand.input(file))
+                        concatCommand
+                            .complexFilter(settb.concat(atrim, xFadeFilters, audioFilters).join(" ").replace(/\s/g, ""))
+                            .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
+                            .output("output.mp4")
+                            .on('end', () => resolve())
+                            .run()
+                    }
+                }
+            }
+        }
+    })
+}
+
+function fadeInOutReplay() {
+    return new Promise(async (resolve) => {
+        let duration = null
+        await new Promise((r) => {
+            ffprobe("output.mp4", (err, metadata) => {
+                duration = metadata.format.duration
+                r()
+            })
+        })
+
+        ffmpeg("output.mp4")
+            .complexFilter(`[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${duration-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${duration-1}[audio]`)
+            .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
+            .output("output_done.mp4")
+            .on('end', () => resolve())
+            .run()
+    })
+}

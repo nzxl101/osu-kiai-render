@@ -1,6 +1,6 @@
 replays-1/
 replays-3/
-danser/
+danser/*
 node_modules/
 package-lock.json
 output.mp4
