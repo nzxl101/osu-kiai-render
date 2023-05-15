@@ -14,7 +14,7 @@ const danser = path.join(__dirname, "danser", "danser-cli.exe");
 
 const ffmpegSettings = [
     "-c:v h264_nvenc",
-    "-c:a aac",
+    "-c:a libopus",
     "-rc cbr",
     "-qp 26",
     "-profile high",
