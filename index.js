@@ -29,7 +29,7 @@ const ffmpegSettings = [
 
     const replays = await getReplays(fs.readdirSync(path.join(__dirname, "replays")))
     console.log(`Found ${Object.entries(replays).length} replays ..`)
-
+    
     await renderReplays(replays)
 
     console.log(`Crossfading all replays into one video ..`)
@@ -79,12 +79,12 @@ function getReplays(replayFiles = []) {
 
             await new Promise((resolve) => {
                 for (let i = 0; i < beatmap.timingPoints.length; i++) {
-                    if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 3)) {
-                        if(beatmap.timingPoints[i].timingChange == true) {
+                    if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 2)) {
+                        if(beatmap.timingPoints[i].kiaiTimeActive == true) {
                             kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
                             resolve()
                             break;
-                        } else if(beatmap.timingPoints[i].kiaiTimeActive == true) {
+                        } else if(beatmap.timingPoints[i].timingChange == true) {
                             kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
                             resolve()
                             break;
