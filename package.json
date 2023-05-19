@@ -1,13 +1,13 @@
 {
-  "name": "topmapsoftheweek",
-  "version": "1.0.0",
-  "description": "",
+  "name": "osu-kiai-render",
+  "version": "0.0.1",
+  "description": "Render your heated osu! difficulty spike moments",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "nzxl101",
+  "license": "GPL-3.0-only",
   "dependencies": {
     "@surfy/sqlite": "^1.1.3",
     "fluent-ffmpeg": "^2.1.2",

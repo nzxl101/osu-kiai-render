@@ -27,22 +27,27 @@ const ffmpegSettings = [
 (async () => {
     console.time("Rendering")
 
+    if(fs.readdirSync(path.join(danser, "..", "videos")).length >= 1) {
+        await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
+    }
+
     const replays = await getReplays(fs.readdirSync(path.join(__dirname, "replays")))
     console.log(`Found ${Object.entries(replays).length} replays ..`)
-    
+
     await renderReplays(replays)
 
     console.log(`Crossfading all replays into one video ..`)
     await concatReplays(replays)
 
     console.log(`Adding a proper Fade In and Out ..`)
-    await fadeInOutReplay()
+    await fadeInOutReplay(replays[Object.keys(replays)[Object.entries(replays).length - 1]].id)
 
     console.log(`Done!`)
     console.timeEnd("Rendering")
 
-    await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
-    await fs.unlinkSync("output.mp4")
+    if(fs.readdirSync(path.join(danser, "..", "videos")).length >= 1) {
+        await fsExtra.emptyDirSync(path.join(danser, "..", "videos"))
+    }
 
     process.exit()
 })()
@@ -59,6 +64,7 @@ function getReplays(replayFiles = []) {
             let songVersion = songTitle.match(/.*\s(\[(.*)\])\s\(.*\)/)
 
             let MD5 = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).beatmapMD5
+            let replay_length = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).replay_length
 
             let song = await db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${songName[1].trim()}" AND artist = "${songArtist[1].trim()}" AND version = "${songVersion[2].trim()}" OR md5 = "${MD5}" LIMIT 1;`)
             if(typeof song == "undefined") {
@@ -75,11 +81,11 @@ function getReplays(replayFiles = []) {
             })
 
             start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
-            length = beatmap.totalTime
+            length = replay_length
 
             await new Promise((resolve) => {
                 for (let i = 0; i < beatmap.timingPoints.length; i++) {
-                    if(beatmap.timingPoints[i].offset > Math.floor((beatmap.totalTime * 1000) / 2)) {
+                    if(beatmap.timingPoints[i].offset > (length / 3)) {
                         if(beatmap.timingPoints[i].kiaiTimeActive == true) {
                             kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
                             resolve()
@@ -107,7 +113,8 @@ function getReplays(replayFiles = []) {
                 saved: null,
                 title: `${song.artist} - ${song.title}`,
                 kiai: kiai-start,
-                length: length
+                length: length,
+                id: (Math.random() + 1).toString(36).substring(7)
             }
 
             if((i+1) >= replayFiles.length) {
@@ -143,24 +150,24 @@ function renderReplays(replays = {}) {
             })
 
             let getIntro = ffmpeg(replay.saved)
-                .setStartTime(1)
-                .setDuration(6)
+                .setStartTime(6)
+                .setDuration(11)
                 .outputOptions(ffmpegSettings)
-                .output(replay.saved.replace(".mp4", "_intro.mp4"))
+                .output(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
 
             let getKiai = ffmpeg(replay.saved)
                 .setStartTime(replay.kiai)
-                .setDuration(25)
+                .setDuration(30)
                 .outputOptions(ffmpegSettings)
-                .output(replay.saved.replace(".mp4", "_kiai.mp4"))
+                .output(replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
 
-            let concatKiaiIntro = ffmpeg(replay.saved.replace(".mp4", "_intro.mp4"))
-                .addInput(replay.saved.replace(".mp4", "_kiai.mp4"))
-                .complexFilter(`xfade=transition=fade:duration=1:offset=5;acrossfade=duration=1`)
+            let concatKiaiIntro = ffmpeg(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
+                .addInput(replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
+                .complexFilter(`xfade=transition=fade:duration=1:offset=10;acrossfade=duration=1`)
                 .outputOptions(ffmpegSettings)
-                .output(replay.saved.replace(".mp4", "_concat.mp4"))
+                .output(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`))
 
-            if((duration-5)-replay.kiai >= 20) {
+            if((duration-5)-replay.kiai >= 40) {
                 await new Promise((r) => {
                     getIntro
                         .on("end", () => r())
@@ -174,7 +181,7 @@ function renderReplays(replays = {}) {
                     .run()
             })
 
-            if(fs.existsSync(replay.saved.replace(".mp4", "_intro.mp4"))) {
+            if(fs.existsSync(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))) {
                 await new Promise((r) => {
                     concatKiaiIntro
                         .on("end", () => r())
@@ -186,16 +193,18 @@ function renderReplays(replays = {}) {
             await page.goto(path.join(__dirname, `text.html?title=${replay.title}&sub=${replay.sr}`))
             await page.screenshot({
                 omitBackground: true,
-                path: `${replay.saved.replace(".mp4", ".png")}`
+                path: `${replay.saved.replace(".mp4", `_${replay.id}.png`)}`
             })
             await page.close()
 
+            await new Promise((p) => setTimeout(p, 500)) //sanity
+
             await new Promise((r) => {
-                let addTextOverlay = ffmpeg(fs.existsSync(replay.saved.replace(".mp4", "_concat.mp4")) == true ? replay.saved.replace(".mp4", "_concat.mp4") : replay.saved.replace(".mp4", "_kiai.mp4"))
-                    .addInput(replay.saved.replace(".mp4", ".png"))
+                let addTextOverlay = ffmpeg(fs.existsSync(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`)) == true ? replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`) : replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
+                    .addInput(replay.saved.replace(".mp4", `_${replay.id}.png`))
                     .complexFilter(`[0:v][1:v]overlay=0:850:enable='gt(t,0)'`)
                     .outputOptions(ffmpegSettings)
-                    .output(replay.saved.replace(".mp4", "_edited.mp4"))
+                    .output(replay.saved.replace(".mp4", `_${replay.id}_edited.mp4`))
 
                 addTextOverlay
                     .on("end", () => r())
@@ -217,19 +226,21 @@ function concatReplays(replays = {}) {
         let atrim = []
         let settb = []
         let previousOffset = []
+        let previousTitle = []
         
         for (let x = 0; x < Object.entries(replays).length; x++) {
             let replay = replays[Object.keys(replays)[x]]
 
             let duration = null
             await new Promise((r) => {
-                ffprobe(replay.saved.replace(".mp4", "_edited.mp4"), (err, metadata) => {
+                ffprobe(replay.saved.replace(".mp4", `_${replay.id}_edited.mp4`), (err, metadata) => {
                     duration = metadata.format.duration
                     r()
                 })
             })
 
-            toCrossfade.push(`${replay.saved.replace(".mp4", "_edited.mp4")}`)
+            toCrossfade.push(`${replay.saved.replace(".mp4", `_${replay.id}_edited.mp4`)}`)
+            previousTitle.push(replay.title)
             previousOffset.push(duration)
 
             if((x+1) >= Object.entries(replays).length) {
@@ -249,12 +260,18 @@ function concatReplays(replays = {}) {
                     atrim.push(`[${y}]atrim=0:${previousOffset[y]}[${y}:a];`)
 
                     if((y+1) >= toCrossfade.length) {
+                        let timestamps = []
+                        previousTitle.forEach((title, i) => {
+                            timestamps.push(`${previousOffset[i]} ${title}`)
+                        })
+                        fs.writeFileSync(`${replay.id}.txt`, timestamps.join("\n"), "utf-8")
+
                         let concatCommand = ffmpeg()
                         toCrossfade.forEach(file => concatCommand.input(file))
                         concatCommand
                             .complexFilter(settb.concat(atrim, xFadeFilters, audioFilters).join(" ").replace(/\s/g, ""))
                             .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
-                            .output("output.mp4")
+                            .output(`${replay.id}.mp4`)
                             .on('end', () => resolve())
                             .run()
                     }
@@ -264,20 +281,20 @@ function concatReplays(replays = {}) {
     })
 }
 
-function fadeInOutReplay() {
+function fadeInOutReplay(id) {
     return new Promise(async (resolve) => {
         let duration = null
         await new Promise((r) => {
-            ffprobe("output.mp4", (err, metadata) => {
+            ffprobe(`${id}.mp4`, (err, metadata) => {
                 duration = metadata.format.duration
                 r()
             })
         })
 
-        ffmpeg("output.mp4")
+        ffmpeg(`${id}.mp4`)
             .complexFilter(`[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${duration-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${duration-1}[audio]`)
             .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
-            .output("output_done.mp4")
+            .output(`${id}_output.mp4`)
             .on('end', () => resolve())
             .run()
     })
