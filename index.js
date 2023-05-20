@@ -65,7 +65,7 @@ function getReplays(replayFiles = []) {
             let songVersion = songTitle.match(/.*\s(\[(.*)\])\s\(.*\)/)
 
             let MD5 = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).beatmapMD5
-            let replay_length = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).replay_length
+            let mods = parseMods(osr.readSync(path.join(__dirname, "replays", replayFiles[i])).mods)
 
             let song = await db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${songName[1].trim()}" AND artist = "${songArtist[1].trim()}" AND version = "${songVersion[2].trim()}" OR md5 = "${MD5}" LIMIT 1;`)
             if(typeof song == "undefined") {
@@ -82,24 +82,13 @@ function getReplays(replayFiles = []) {
             })
 
             start = Math.floor(beatmap.hitObjects[0].startTime / 1000)
-            length = replay_length
+            length = mods.match(/DT|HT|NC/) != null ? mods.match(/DT|NC/) != null ? Math.floor(beatmap.totalTime - (beatmap.totalTime / 100) * 33) : Math.floor(beatmap.totalTime + (beatmap.totalTime / 100) * 33) : beatmap.totalTime
 
             await new Promise((resolve) => {
                 for (let i = 0; i < beatmap.timingPoints.length; i++) {
-                    if(beatmap.timingPoints[i].offset > (length / 2)) {
-                        if(beatmap.timingPoints[i].kiaiTimeActive == true) {
-                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                            resolve()
-                            break;
-                        } else if(beatmap.timingPoints[i].timingChange == true) {
-                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                            resolve()
-                            break;
-                        } else if(beatmap.timingPoints[i].bpm != beatmap.bpmMin) {
-                            kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
-                            resolve()
-                            break;
-                        } else if(beatmap.timingPoints[i].velocity != beatmap.timingPoints[0].velocity) {
+                    if(beatmap.timingPoints[i].offset >= Math.floor((length * 1000) / 2)) {
+                        if(beatmap.timingPoints[i].kiaiTimeActive == true || beatmap.timingPoints[i].timingChange == true ||
+                            beatmap.timingPoints[i].bpm != beatmap.bpmMin || beatmap.timingPoints[i].velocity != beatmap.timingPoints[0].velocity) {
                             kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
                             resolve()
                             break;
@@ -113,7 +102,7 @@ function getReplays(replayFiles = []) {
                 sr: `${song.version}`,
                 saved: null,
                 title: `${song.artist} - ${song.title}`,
-                kiai: kiai-start,
+                kiai: mods.match(/DT|HT|NC/) != null ? mods.match(/DT|NC/) != null ? Math.floor((kiai-start) - ((kiai-start) / 100) * 33) : Math.floor((kiai-start) + ((kiai-start) / 100) * 33) : (kiai-start),
                 length: length,
                 id: (Math.random() + 1).toString(36).substring(7)
             }
@@ -264,7 +253,7 @@ function concatReplays(replays = {}) {
                         let timestamps = []
                         let sum = 0
 
-                        previousTitle.forEach((value, i) => {
+                        previousOffset.forEach((value, i) => {
                             let cloned = previousOffset.slice()
                             sum += value
                             timestamps.push(`${moment(Math.floor(sum - cloned[i]) * 1000).format("mm:ss")}`)
@@ -306,4 +295,25 @@ function fadeInOutReplay(id) {
             })
             .run()
     })
+}
+
+function parseMods(num) {
+    let list = [];
+
+    if(Number(num)) {
+        if((num & 1<<0) != 0) list.push("NF");
+        if((num & 1<<1) != 0) list.push("EZ");
+        if((num & 1<<3) != 0) list.push("HD");
+        if((num & 1<<4) != 0) list.push("HR");
+        if((num & 1<<5) != 0) list.push("SD");
+        else if((num & 1<<14) != 0) list.push("PF");
+        if((num & 1<<9) != 0) list.push("NC");
+        else if((num & 1<<6) != 0) list.push("DT");
+        if((num & 1<<7) != 0) list.push("RX");
+        if((num & 1<<8) != 0) list.push("HT");
+        if((num & 1<<10) != 0) list.push("FL");
+        if((num & 1<<12) != 0) list.push("SO");
+    }
+
+    return list.length >= 1 ? `${list.join("")}` : "NM";
 }
