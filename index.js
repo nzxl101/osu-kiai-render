@@ -8,6 +8,7 @@ const parser = require('osu-parser');
 const ffmpeg = require("fluent-ffmpeg");
 const ffprobe = require("fluent-ffmpeg").ffprobe;
 const osr = require('node-osr');
+const moment = require("moment");
 
 const osu = "C:\\Users\\rzbwi\\AppData\\Local\\osu\!\\Songs";
 const danser = path.join(__dirname, "danser", "danser-cli.exe");
@@ -85,7 +86,7 @@ function getReplays(replayFiles = []) {
 
             await new Promise((resolve) => {
                 for (let i = 0; i < beatmap.timingPoints.length; i++) {
-                    if(beatmap.timingPoints[i].offset > (length / 3)) {
+                    if(beatmap.timingPoints[i].offset > (length / 2)) {
                         if(beatmap.timingPoints[i].kiaiTimeActive == true) {
                             kiai = Math.floor(beatmap.timingPoints[i].offset / 1000)
                             resolve()
@@ -150,8 +151,8 @@ function renderReplays(replays = {}) {
             })
 
             let getIntro = ffmpeg(replay.saved)
-                .setStartTime(6)
-                .setDuration(11)
+                .setStartTime(4)
+                .setDuration(10)
                 .outputOptions(ffmpegSettings)
                 .output(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
 
@@ -163,7 +164,7 @@ function renderReplays(replays = {}) {
 
             let concatKiaiIntro = ffmpeg(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
                 .addInput(replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
-                .complexFilter(`xfade=transition=fade:duration=1:offset=10;acrossfade=duration=1`)
+                .complexFilter(`xfade=transition=fade:duration=1:offset=9;acrossfade=duration=1`)
                 .outputOptions(ffmpegSettings)
                 .output(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`))
 
@@ -261,8 +262,12 @@ function concatReplays(replays = {}) {
 
                     if((y+1) >= toCrossfade.length) {
                         let timestamps = []
-                        previousTitle.forEach((title, i) => {
-                            timestamps.push(`${previousOffset[i]} ${title}`)
+                        let sum = 0
+
+                        previousTitle.forEach((value, i) => {
+                            let cloned = previousOffset.slice()
+                            sum += value
+                            timestamps.push(`${moment(Math.floor(sum - cloned[i]) * 1000).format("mm:ss")}`)
                         })
                         fs.writeFileSync(`${replay.id}.txt`, timestamps.join("\n"), "utf-8")
 
@@ -295,7 +300,10 @@ function fadeInOutReplay(id) {
             .complexFilter(`[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${duration-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${duration-1}[audio]`)
             .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
             .output(`${id}_output.mp4`)
-            .on('end', () => resolve())
+            .on('end', () => {
+                fs.unlinkSync(`${id}.mp4`)
+                resolve()
+            })
             .run()
     })
 }
