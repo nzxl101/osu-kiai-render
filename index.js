@@ -104,7 +104,8 @@ function getReplays(replayFiles = []) {
                 title: `${song.artist} - ${song.title}`,
                 kiai: mods.match(/DT|HT|NC/) != null ? mods.match(/DT|NC/) != null ? Math.floor((kiai-start) - ((kiai-start) / 100) * 33) : Math.floor((kiai-start) + ((kiai-start) / 100) * 33) : (kiai-start),
                 length: length,
-                id: (Math.random() + 1).toString(36).substring(7)
+                id: (Math.random() + 1).toString(36).substring(7),
+                index: Object.entries(parsedFiles).length+1
             }
 
             if((i+1) >= replayFiles.length) {
@@ -180,7 +181,7 @@ function renderReplays(replays = {}) {
             }
 
             let page = await browser.newPage()
-            await page.goto(path.join(__dirname, `text.html?title=${replay.title}&sub=${replay.sr}`))
+            await page.goto(path.join(__dirname, `text.html?title=${replay.title}&sub=${replay.sr}&index=${replay.index}`))
             await page.screenshot({
                 omitBackground: true,
                 path: `${replay.saved.replace(".mp4", `_${replay.id}.png`)}`
@@ -192,7 +193,7 @@ function renderReplays(replays = {}) {
             await new Promise((r) => {
                 let addTextOverlay = ffmpeg(fs.existsSync(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`)) == true ? replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`) : replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
                     .addInput(replay.saved.replace(".mp4", `_${replay.id}.png`))
-                    .complexFilter(`[0:v][1:v]overlay=0:850:enable='gt(t,0)'`)
+                    .complexFilter(`[0:v][1:v]overlay=0:225:enable='gt(t,0)'`)
                     .outputOptions(ffmpegSettings)
                     .output(replay.saved.replace(".mp4", `_${replay.id}_edited.mp4`))
 
@@ -256,7 +257,7 @@ function concatReplays(replays = {}) {
                         previousOffset.forEach((value, i) => {
                             let cloned = previousOffset.slice()
                             sum += value
-                            timestamps.push(`${moment(Math.floor(sum - cloned[i]) * 1000).format("mm:ss")}`)
+                            timestamps.push(`${moment(Math.floor(sum - cloned[i]) * 1000).format("mm:ss")} ${previousTitle[i]}`)
                         })
                         fs.writeFileSync(`${replay.id}.txt`, timestamps.join("\n"), "utf-8")
 

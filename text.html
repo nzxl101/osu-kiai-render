@@ -34,8 +34,8 @@
             const params = new Proxy(new URLSearchParams(window.location.search), {
                 get: (searchParams, prop) => searchParams.get(prop),
             });
-            document.getElementsByClassName("title")[0].innerHTML = params.title;
-            document.getElementsByClassName("subtitle")[0].innerHTML = `Difficulty: ${params.sub}`;
+            document.getElementsByClassName("title")[0].innerHTML = `${params.title}`;
+            document.getElementsByClassName("subtitle")[0].innerHTML = `#${params.index} | Difficulty: ${params.sub}`;
         </script>
     </body>
 </html>
