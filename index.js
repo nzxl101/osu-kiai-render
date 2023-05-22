@@ -13,15 +13,18 @@ const moment = require("moment");
 const osu = "C:\\Users\\rzbwi\\AppData\\Local\\osu\!\\Songs";
 const danser = path.join(__dirname, "danser", "danser-cli.exe");
 
-const ffmpegSettings = [
+const stream_copy = [
+    "-c:v copy",
+    "-c:a copy"
+];
+
+const filter_encode = [
     "-c:v h264_nvenc",
     "-c:a libopus",
-    "-rc cbr",
-    "-qp 26",
-    "-profile high",
-    "-preset p7",
-    "-g 450",
-    "-b:v 10M",
+    "-rc constqp",
+    "-qp 30",
+    "-profile main",
+    "-preset p1",
     "-b:a 192k"
 ];
 
@@ -120,7 +123,7 @@ function renderReplays(replays = {}) {
         let browser = await puppeteer.launch({
             headless: "new",
             defaultViewport: {
-                height: 100,
+                height: 400,
                 width: 1400
             }
         })
@@ -143,19 +146,19 @@ function renderReplays(replays = {}) {
             let getIntro = ffmpeg(replay.saved)
                 .setStartTime(4)
                 .setDuration(10)
-                .outputOptions(ffmpegSettings)
+                .outputOptions(stream_copy)
                 .output(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
 
             let getKiai = ffmpeg(replay.saved)
                 .setStartTime(replay.kiai)
                 .setDuration(30)
-                .outputOptions(ffmpegSettings)
+                .outputOptions(stream_copy)
                 .output(replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
 
             let concatKiaiIntro = ffmpeg(replay.saved.replace(".mp4", `_${replay.id}_intro.mp4`))
                 .addInput(replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
                 .complexFilter(`xfade=transition=fade:duration=1:offset=9;acrossfade=duration=1`)
-                .outputOptions(ffmpegSettings)
+                .outputOptions(filter_encode)
                 .output(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`))
 
             if((duration-5)-replay.kiai >= 40) {
@@ -194,7 +197,7 @@ function renderReplays(replays = {}) {
                 let addTextOverlay = ffmpeg(fs.existsSync(replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`)) == true ? replay.saved.replace(".mp4", `_${replay.id}_concat.mp4`) : replay.saved.replace(".mp4", `_${replay.id}_kiai.mp4`))
                     .addInput(replay.saved.replace(".mp4", `_${replay.id}.png`))
                     .complexFilter(`[0:v][1:v]overlay=0:225:enable='gt(t,0)'`)
-                    .outputOptions(ffmpegSettings)
+                    .outputOptions(filter_encode)
                     .output(replay.saved.replace(".mp4", `_${replay.id}_edited.mp4`))
 
                 addTextOverlay
@@ -265,7 +268,7 @@ function concatReplays(replays = {}) {
                         toCrossfade.forEach(file => concatCommand.input(file))
                         concatCommand
                             .complexFilter(settb.concat(atrim, xFadeFilters, audioFilters).join(" ").replace(/\s/g, ""))
-                            .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
+                            .outputOptions(filter_encode.concat(["-map [video]", "-map [audio]"]))
                             .output(`${replay.id}.mp4`)
                             .on('end', () => resolve())
                             .run()
@@ -288,7 +291,7 @@ function fadeInOutReplay(id) {
 
         ffmpeg(`${id}.mp4`)
             .complexFilter(`[0:v]fade=type=in:duration=1,fade=type=out:duration=1:start_time=${duration-1}[video];[0:a]afade=type=in:duration=1,afade=type=out:duration=1:start_time=${duration-1}[audio]`)
-            .outputOptions(ffmpegSettings.concat(["-map [video]", "-map [audio]"]))
+            .outputOptions(filter_encode.concat(["-map [video]", "-map [audio]"]))
             .output(`${id}_output.mp4`)
             .on('end', () => {
                 fs.unlinkSync(`${id}.mp4`)
