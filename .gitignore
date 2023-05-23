@@ -1,4 +1,5 @@
 node_modules/
 danser/
+replays/*
 *.mp4
 *.txt

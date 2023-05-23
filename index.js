@@ -70,7 +70,7 @@ function getReplays(replayFiles = []) {
             let MD5 = osr.readSync(path.join(__dirname, "replays", replayFiles[i])).beatmapMD5
             let mods = parseMods(osr.readSync(path.join(__dirname, "replays", replayFiles[i])).mods)
 
-            let song = await db.get(`SELECT dir, file, title, artist, version FROM beatmaps WHERE title = "${songName[1].trim()}" AND artist = "${songArtist[1].trim()}" AND version = "${songVersion[2].trim()}" OR md5 = "${MD5}" LIMIT 1;`)
+            let song = await db.get(`SELECT dir, file, title, artist, version, ar, stars, bpmMax FROM beatmaps WHERE title = "${songName[1].trim()}" AND artist = "${songArtist[1].trim()}" AND version = "${songVersion[2].trim()}" OR md5 = "${MD5}" LIMIT 1;`)
             if(typeof song == "undefined") {
                 console.log(`${songTitle} not found!`)
                 continue
@@ -102,7 +102,7 @@ function getReplays(replayFiles = []) {
 
             parsedFiles[`${replayFiles[i].replace(/[\n\r\s\t]+/g, "")}`] = {
                 file: `${path.join(__dirname, ".", "replays", replayFiles[i])}`,
-                sr: `${song.version}`,
+                sr: `${song.version} (AR${song.ar} BPM${Math.round(song.bpmMax)} ${Math.round(song.stars * 10) / 10}☆)`,
                 saved: null,
                 title: `${song.artist} - ${song.title}`,
                 kiai: mods.match(/DT|HT|NC/) != null ? mods.match(/DT|NC/) != null ? Math.floor((kiai-start) - ((kiai-start) / 100) * 33) : Math.floor((kiai-start) + ((kiai-start) / 100) * 33) : (kiai-start),
